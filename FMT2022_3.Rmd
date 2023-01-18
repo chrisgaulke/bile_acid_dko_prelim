@@ -1,0 +1,493 @@
+---
+title: "FXR + SHP DKO Microbiome"
+output: html_notebook
+---
+
+### Set up the environment
+
+```{r, message=FALSE}
+library(dada2)
+library(ggplot2)
+library(vegan)
+library(reshape2)
+
+options(stringsAsFactors = F)
+```
+
+#### Functions
+
+```{r}
+###
+#        Function phylotype_analysis             #
+###
+
+phylotype_analysis <- function(obj, tax) {
+  #obj: microbiome object with at least 1 slot (data)
+  #tax: a tax object (named list taxa as names values in the list are seq ids)
+  obj.out <- NULL
+  for (h in 1:length(tax)) {
+    df <- NULL
+    #print(h)#debugging
+    for (i in 1:length(tax[[h]])) {
+      #print(i)#debugging
+      v1       <- obj$data[, unlist(tax[[h]][[i]])]
+      v2       <- names(tax[[h]])[i]
+      if (is.null(dim(v1))) {
+        df[[v2]] <- v1
+      } else{
+        df[[v2]] <- rowSums(v1)
+      }
+    }
+    obj.out[[names(tax)[h]]] <- as.data.frame(df)
+  }
+  return(obj.out)
+}
+
+make_taxa_df <- function(tax){
+
+  kingdom.df <- replicate(length(unique(tax[, 2])), c())
+  names(kingdom.df) <- unique(tax[, 2])
+  phylum.df  <- replicate(length(unique(tax[, 3])), c())
+  names(phylum.df) <- unique(tax[, 3])
+  class.df   <- replicate(length(unique(tax[, 4])), c())
+  names(class.df) <- unique(tax[, 4])
+  order.df   <- replicate(length(unique(tax[, 5])), c())
+  names(order.df) <- unique(tax[, 5])
+  family.df  <- replicate(length(unique(tax[, 6])), c())
+  names(family.df) <- unique(tax[, 6])
+  genus.df   <- replicate(length(unique(tax[, 7])), c())
+  names(genus.df) <- unique(tax[, 7])
+
+  for (i in 1:nrow(tax)) {
+    kingdom.df[[tax[i, 2]]] <-
+      c(kingdom.df[[tax[i, 2]]], tax[i, 1])
+    phylum.df[[tax[i, 3]]]  <-
+      c(phylum.df[[tax[i, 3]]], tax[i, 1])
+    class.df[[tax[i, 4]]]   <-
+      c(class.df[[tax[i, 4]]], tax[i, 1])
+    order.df[[tax[i, 5]]]   <-
+      c(order.df[[tax[i, 5]]], tax[i, 1])
+    family.df[[tax[i, 6]]]  <-
+      c(family.df[[tax[i, 6]]], tax[i, 1])
+    genus.df[[tax[i, 7]]]   <-
+      c(genus.df[[tax[i, 7]]], tax[i, 1])
+  }
+
+  tax.obj <- NULL
+  tax.obj$kingdom <- kingdom.df
+  tax.obj$phylum  <- phylum.df
+  tax.obj$class   <- class.df
+  tax.obj$order   <- order.df
+  tax.obj$family  <- family.df
+  tax.obj$genus   <- genus.df
+
+  return(tax.obj)
+}
+```
+
+***
+### Import data
+
+First we need to import the data that we generated before.
+
+```{r}
+#importing chimera filtered ASV table
+seqtab.nochim <- read.table("data/seqtab_nochim.txt",
+                            sep = "\t",
+                            row.names = 1,
+                            header = T)
+
+#importing taxonomy table
+taxa <- read.table("data/taxa.txt",
+                                         sep = "\t", 
+                                         row.names = 1,
+                                         header = T
+                      )
+
+#make a mapping of ASV number to ASV sequence
+asv.dict <- data.frame(asv = paste("asv", seq(1,768), sep = ""),
+                                  seq = colnames(seqtab.nochim))
+
+#clean up asv names
+rownames(taxa) <- asv.dict$asv
+colnames(seqtab.nochim) <- asv.dict$asv
+
+#Run once then commented to prevent overwriting each time. 
+
+# write.table(asv.dict,
+#             file = "data/asv_dict.txt",
+#             quote = FALSE,
+#             sep = "\t",
+#             )
+
+#import metadata
+
+metadata <- read.table("data/metadata_FMT2022.txt",
+                   sep = "\t", 
+                   header = T, 
+                   row.names = 1
+                   )
+
+
+metadata$ID <- sapply(rownames(metadata), FUN = function(x){ substr(strsplit(x, "_")[[1]][1], 1,2)})
+
+all(rownames(metadata) %in% rownames(seqtab.nochim))
+
+all(rownames(metadata) == rownames(seqtab.nochim))
+
+dir.create("figs")
+```
+
+***
+
+### Normalize
+
+Next we will generate data normalized three ways. First rarefied, then relative abundance, then center log ratio transformed.
+
+```{r}
+raresamp <- min(rowSums(seqtab.nochim))
+
+#now we can plot the curves
+rarecurve(seqtab.nochim, step = 1000,
+          sample = 0,
+          label = F,
+          col = "black")
+
+abline(v = 1000, col = "red")
+abline(v = 2500, col = "yellow")
+abline(v = 10000, col = "black")
+
+
+set.seed(731)
+seqtab.nochim.rare <- rrarefy(seqtab.nochim, 10000) #rarefy
+seqtab.nochim.rclr <- decostand(seqtab.nochim, method = "rclr") #center log blah blah blah
+seqtab.nochim.rel <- decostand(seqtab.nochim, method = "total") #relative abundance
+
+```
+
+
+***
+
+### Alpha Diversity
+
+#### Calculate diversity
+
+Alpha diversity 
+```{r}
+
+#richness 
+richness.rare <- data.frame(specnumber(seqtab.nochim.rare))
+colnames(richness.rare) <- "richness"
+head(richness.rare)
+
+#shannon entropy
+shannon.rare <- data.frame(diversity(seqtab.nochim.rare, index = "shannon"))
+colnames(shannon.rare) <- "shannon"
+head(shannon.rare)
+
+```
+#### Plot richness
+
+This is pretty meaningless without context so lets add some information to our data frame so we can visualize better. But first we will check to make sure the data frames are in the same order
+
+```{r}
+all(rownames(shannon.rare) == rownames(metadata))
+all(rownames(richness.rare) == rownames(metadata))
+
+
+# richness
+
+richness.rare$genotype <- metadata$Genotype
+richness.rare$sex <- metadata$Sex
+richness.rare$group <- metadata$Group
+richness.rare$FMTdays <- metadata$FMTdays
+richness.rare$gtype_sex <- paste0(richness.rare$genotype, "_", richness.rare$sex)
+
+#alpha dko vs wt pre abx
+
+richness.rare_dko_wt <- richness.rare[which(richness.rare$FMTdays == "FMT-10"),]
+
+summary(lm(richness ~ genotype + sex, data = richness.rare_dko_wt))
+
+
+
+richness.rare_dko_wt.plot <- ggplot(data = richness.rare_dko_wt, 
+                                    aes(x = gtype_sex ,
+                                        y = richness)) + 
+  geom_boxplot(fill = "#528AAE") 
+
+pdf("figs/richness_dko_wt.pdf")
+richness.rare_dko_wt.plot
+dev.off()
+
+# shannon
+
+shannon.rare$genotype <- metadata$Genotype
+shannon.rare$sex <- metadata$Sex
+shannon.rare$group <- metadata$Group
+shannon.rare$FMTdays <- metadata$FMTdays
+shannon.rare$gtype_sex <- paste0(shannon.rare$genotype, "_", shannon.rare$sex)
+
+#alpha dko vs wt pre abx
+
+shannon.rare_dko_wt <- shannon.rare[which(shannon.rare$FMTdays == "FMT-10"),]
+
+summary(lm(shannon ~ genotype + sex, data = shannon.rare_dko_wt))
+
+
+
+shannon.rare_dko_wt_dko_wt.plot <- ggplot(data = shannon.rare_dko_wt,
+                                          aes(x = gtype_sex ,
+                                              y = shannon)) + 
+  geom_boxplot(fill = "#528AAE") #fill by hex code #528AAE
+
+pdf("figs/shannon_dko_wt.pdf")
+shannon.rare_dko_wt_dko_wt.plot
+dev.off()
+
+```
+
+***
+
+### Beta Diversity
+
+Next we will look to see of diversity of our different tissues varies. Here we will use PCA to start. Keep in mind these are exploratory techniques so we can use as man of them as we like.  
+
+#### Sex and Genotype
+
+```{r}
+
+#start by looking at DKO vs WT 
+
+#pre time data names
+
+pre_abx.names <- rownames(metadata[which(metadata$FMTdays == "FMT-10"), ] )
+
+
+seqtab.nochim.rare.pre <- seqtab.nochim.rare[which(rownames(seqtab.nochim.rare) %in% pre_abx.names ),]
+seqtab.nochim.rare.pre <- seqtab.nochim.rare.pre[,which(colSums(seqtab.nochim.rare.pre) > 0)]
+
+seqtab.nochim_rare_pre.prcomp <- prcomp(seqtab.nochim.rare.pre, scale =T, center = T) # defaults
+summary(seqtab.nochim_rare_pre.prcomp)
+plot(seqtab.nochim_rare_pre.prcomp)
+
+seqtab.nochim_rare_pre_prcomp.df <- as.data.frame(seqtab.nochim_rare_pre.prcomp$x[,1:5])
+
+#add metadata for plotting
+
+seqtab.nochim_rare_pre_prcomp.df$genotype <- metadata[which(metadata$FMTdays == "FMT-10"), "Genotype" ]
+seqtab.nochim_rare_pre_prcomp.df$sex <- metadata[which(metadata$FMTdays == "FMT-10"), "Sex" ]
+
+
+seqtab_rare_pca.pre_plot <- ggplot(data = seqtab.nochim_rare_pre_prcomp.df,
+                                 aes(x = PC1,
+                                     y = PC2,
+                                     color = sex,
+                                     shape = genotype
+                                     
+                                     ) 
+                               ) 
+
+pdf("figs/pca_dko_wt.pdf")
+seqtab_rare_pca.pre_plot +
+  geom_point(size = 6, alpha = .7)+
+  scale_color_brewer(palette = "Dark2")+
+  theme(
+    text = element_text(size = 16, colour = "black"),
+    panel.grid.major = element_line(colour = "grey99"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(colour = "black"),
+    axis.text = element_text(colour = "black"),
+    aspect.ratio = 1,
+  )+
+  xlab("PC1 (18%)")+
+  ylab("PC2 (14%)")
+dev.off()
+
+set.seed(731)
+seqtab.nochim_rare_pre.adonis <- adonis2(seqtab.nochim.rare.pre~ Genotype * Sex, 
+                                         data = metadata[which(metadata$FMTdays == "FMT-10"), ], 
+                                         permutations = 10000 )
+
+seqtab.nochim_rare_pre.adonis
+
+```
+
+#### DKO Sex 
+
+If our question is how the microbiome varies in DKO model by sex
+```{r}
+
+#start by looking at DKO male vs female
+
+#pre time data names
+
+pre_abx_dko.names <- rownames(metadata[which(metadata$FMTdays == "FMT-10" & metadata$Genotype == "DKO"),] )
+
+
+seqtab.nochim.dko_pre <- seqtab.nochim.rare[which(rownames(seqtab.nochim.rare) %in% pre_abx_dko.names ),]
+seqtab.nochim.dko_pre <- seqtab.nochim.dko_pre[,which(colSums(seqtab.nochim.dko_pre) > 0)]
+
+seqtab.nochim.dko_pre.prcomp <- prcomp(seqtab.nochim.dko_pre, scale =T, center = T) # defaults
+
+summary(seqtab.nochim.dko_pre.prcomp)
+plot(seqtab.nochim.dko_pre.prcomp)
+
+seqtab.nochim.dko_pre.prcomp.df <- as.data.frame(seqtab.nochim.dko_pre.prcomp$x[,1:5])
+
+#add metadata for plotting
+
+seqtab.nochim.dko_pre.prcomp.df$sex <- metadata[which(metadata$FMTdays == "FMT-10" & metadata$Genotype == "DKO"),"Sex"]
+
+
+
+seqtab.nochim.dko_pre.plot <- ggplot(data = seqtab.nochim.dko_pre.prcomp.df,
+                                 aes(x = PC2,
+                                     y = PC3,
+                                     color = sex,
+                                     ) 
+                               ) 
+seqtab.nochim.dko_pre.plot +
+  geom_point(size = 6, alpha = .7)+
+  scale_color_brewer(palette = "Dark2")+
+  theme(
+    text = element_text(size = 16, colour = "black"),
+    panel.grid.major = element_line(colour = "grey99"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(colour = "black"),
+    axis.text = element_text(colour = "black"),
+    aspect.ratio = 1,
+  )+
+  xlab("PC2 (17%)")+
+  ylab("PC3 (11%)")
+
+set.seed(731)
+seqtab.nochim_rare_pre_dko.adonis <- adonis2(seqtab.nochim.dko_pre~ Sex, 
+                                         data = metadata[which(metadata$FMTdays == "FMT-10" & metadata$Genotype == "DKO"),], 
+                                         permutations = 10000 )
+
+seqtab.nochim_rare_pre_dko.adonis
+
+#The high variability in whole community diversity may obscure associations 
+#envfit will look at fit for just PC2 and PC3
+
+set.seed(731)
+seqtab.nochim_rare_pre_dko.envfit <- envfit(seqtab.nochim.dko_pre.prcomp$x ~ Sex, data= metadata[which(metadata$FMTdays == "FMT-10" & metadata$Genotype == "DKO"),], choices=c(2,3))
+seqtab.nochim_rare_pre_dko.envfit
+
+#Goodness of fit:
+#        r2 Pr(>r)  
+#Sex 0.2409  0.022 *
+
+ef.centroids <- as.data.frame(seqtab.nochim_rare_pre_dko.envfit$factors$centroids)
+
+ef.centroids$sex <- c("female", "male")
+
+pdf("figs/pca_dko_by_sex.pdf")
+seqtab.nochim.dko_pre.plot +
+  geom_point(data = ef.centroids, 
+             aes(x = PC2, y = PC3, color = sex),
+             size = 10, alpha = .3,show.legend = F)+
+  geom_point(size = 6, alpha = .7)+
+  scale_color_brewer(palette = "Dark2")+
+  theme(
+    text = element_text(size = 16, colour = "black"),
+    panel.grid.major = element_line(colour = "grey99"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(colour = "black"),
+    axis.text = element_text(colour = "black"),
+    aspect.ratio = 1,
+  )+
+  xlab("PC2 (17%)")+
+  ylab("PC3 (11%)")
+dev.off()
+
+```
+
+### Post transplant diversity
+
+The next question, does FMT shift the microbiome in a sex specific manner. 
+
+```{r}
+
+#select the samples we want
+keeps.names <- rownames(metadata[which(metadata$Group == "feces" & metadata$Genotype == "DKO" & metadata$ID %in% c(19, 20, 22, 23, 24, 30, 32) & metadata$FMTdays %in% c("FMT-10", "FMT14")),])
+
+#make a subset metadata for later
+fmt_div.metadata <- metadata[which(rownames(metadata) %in% keeps.names),]
+
+#filter and remove zero sum columns
+fmt_div.df <- seqtab.nochim.rare[which(rownames(seqtab.nochim.rare) %in% keeps.names),]
+fmt_div.df <- fmt_div.df[,which(colSums(fmt_div.df) > 0 )]
+
+#using jaccard here bc... hipster nonsense 
+fmt_div.dist <- vegdist(fmt_div.df,
+                        method = "bray",
+                        diag = F, upper = F)
+
+#make an easier to work with object
+fmt_div.dist <- as.matrix(fmt_div.dist)
+
+#make groups
+male.pre <- rownames(fmt_div.metadata[which(fmt_div.metadata$Sex == "male" & fmt_div.metadata$FMTdays == "FMT-10"),])
+
+male.post<- rownames(fmt_div.metadata[which(fmt_div.metadata$Sex == "male" & fmt_div.metadata$FMTdays == "FMT14"),])
+
+female.pre <- rownames(fmt_div.metadata[which(fmt_div.metadata$Sex == "female" & fmt_div.metadata$FMTdays == "FMT-10"),])
+
+female.post <- rownames(fmt_div.metadata[which(fmt_div.metadata$Sex == "female" & fmt_div.metadata$FMTdays == "FMT14"),])
+
+pre_post_bdiv.df <- data.frame( bdiv = c(as.vector(fmt_div.dist[male.pre, female.pre]), as.vector(fmt_div.dist[male.pre, male.pre]), as.vector(fmt_div.dist[female.pre, female.pre]), as.vector(fmt_div.dist[female.post, male.pre]), as.vector(fmt_div.dist[male.post, female.pre])
+))
+
+#pdf(file = "figs/test.pdf", width = 5)
+
+boxplot(as.vector(fmt_div.dist[male.pre, female.pre]), as.vector(fmt_div.dist[male.pre, male.pre]), as.vector(fmt_div.dist[female.pre, female.pre]), as.vector(fmt_div.dist[female.post, male.pre]), as.vector(fmt_div.dist[male.post, female.pre]))
+#dev.off()
+
+boxplot(as.vector(fmt_div.dist[male.pre, male.pre]), as.vector(fmt_div.dist[male.post, male.pre]))
+
+wilcox.test(as.vector(fmt_div.dist[male.pre, male.pre]), as.vector(fmt_div.dist[male.post, male.pre]))
+
+
+boxplot(as.vector(fmt_div.dist[male.pre, male.pre]), as.vector(fmt_div.dist[male.post, male.pre]), 
+as.vector(fmt_div.dist[male.post, male.post]))
+
+
+
+```
+
+Next lets look at individual ASV patterns that differ by genotype and sex
+
+```{r warning=FALSE, message=FALSE}
+
+pre.meta <- metadata[which(metadata$FMTdays == "FMT-10"),  ]
+
+fits <- NULL
+for(i in 1:ncol(seqtab.nochim.rare.pre)){
+  
+  fit0 <- MASS::glm.nb(seqtab.nochim.rare.pre[,i] ~ Genotype + Sex, data = pre.meta )
+  fit1 <- MASS::glm.nb(seqtab.nochim.rare.pre[,i] ~ Genotype * Sex, data = pre.meta )
+  
+  fits[[i]]  <- list(null = fit0, alt = fit1, test = anova(fit0, fit1))
+   names(fits)[i] <- colnames(seqtab.nochim.rare.pre)[i]
+
+}
+
+fits.df <- data.frame(pval = sapply(fits, FUN = function(x){x$test$`Pr(Chi)`[2]}),
+                      qval = qvalue::qvalue(sapply(fits, FUN = function(x){x$test$`Pr(Chi)`[2]}))$qvalue
+                        )
+
+View(fits.df[which(fits.df$qval < .15), ])
+
+View(taxa[rownames(fits.df[which(fits.df$qval < .15), ]),])
+
+
+```
+
+
+
+
