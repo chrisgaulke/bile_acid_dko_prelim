@@ -488,6 +488,38 @@ View(taxa[rownames(fits.df[which(fits.df$qval < .15), ]),])
 
 ```
 
+try looking at just the differences between wt males and DKO males
+
+```{r warning=FALSE, message=FALSE}
+
+pre.male.meta <- pre.meta[which(pre.meta$Sex == "male"),]
+pre.male.seqtab <- seqtab.nochim.rare.pre[which(rownames(seqtab.nochim.rare.pre) %in% rownames(pre.male.meta)),]
+
+pre.male.seqtab <- pre.male.seqtab[,which(colSums(pre.male.seqtab) > 0)]
+
+#since we only have two groups and one time point we will do a wilcoxon rank sum 
+# instead of the glm.nb
+
+pre.male.wilcox <- NULL
 
 
+for(i in 1:ncol(pre.male.seqtab)){
+  
+  pre.male.wilcox[[i]]  <- wilcox.test(pre.male.seqtab[,i] ~ Genotype, data = pre.male.meta)
+  
+  names(pre.male.wilcox)[i] <- colnames(pre.male.seqtab)[i]
+
+}
+
+male_wilcox.df <- data.frame(stat = sapply(pre.male.wilcox, FUN = function(x){x$statistic}),
+                             pval = sapply(pre.male.wilcox, FUN = function(x){x$p.value}),
+                      qval = qvalue::qvalue(sapply(pre.male.wilcox, FUN = function(x){x$p.value}))$qvalue
+                        )
+
+rownames(male_wilcox.df) <- names(pre.male.wilcox)
+
+
+male_wilcox_filt.df <- male_wilcox.df[which(male_wilcox.df$qval < 0.15),]
+
+```
 
