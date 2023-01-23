@@ -407,6 +407,79 @@ dev.off()
 
 ```
 
+#### WT Sex 
+
+If our question is how the microbiome varies in WT model by sex
+```{r}
+
+#start by looking at WT male vs female
+
+#pre time data names
+
+pre_abx_wt.names <- rownames(metadata[which(metadata$FMTdays == "FMT-10" & metadata$Genotype == "WT"),] )
+
+
+seqtab.nochim.wt_pre <- seqtab.nochim.rare[which(rownames(seqtab.nochim.rare) %in% pre_abx_wt.names ),]
+
+seqtab.nochim.wt_pre <- seqtab.nochim.wt_pre[,which(colSums(seqtab.nochim.wt_pre) > 0)]
+
+seqtab.nochim.wt_pre.prcomp <- prcomp(seqtab.nochim.wt_pre, scale =T, center = T) # defaults
+
+summary(seqtab.nochim.wt_pre.prcomp)
+plot(seqtab.nochim.wt_pre.prcomp)
+
+seqtab.nochim.wt_pre.prcomp.df <- as.data.frame(seqtab.nochim.wt_pre.prcomp$x[,1:5])
+
+#add metadata for plotting
+
+seqtab.nochim.wt_pre.prcomp.df$sex <- metadata[which(metadata$FMTdays == "FMT-10" & metadata$Genotype == "WT"),"Sex"]
+
+
+
+seqtab.nochim.wt_pre.plot <- ggplot(data = seqtab.nochim.wt_pre.prcomp.df,
+                                 aes(x = PC1,
+                                     y = PC2,
+                                     color = sex,
+                                     ) 
+                               ) 
+seqtab.nochim.dko_pre.plot +
+  geom_point(size = 6, alpha = .7)+
+  scale_color_brewer(palette = "Dark2")+
+  theme(
+    text = element_text(size = 16, colour = "black"),
+    panel.grid.major = element_line(colour = "grey99"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(colour = "black"),
+    axis.text = element_text(colour = "black"),
+    aspect.ratio = 1,
+  )+
+  xlab("PC1 (36%)")+
+  ylab("PC2 (17%)")
+
+set.seed(731)
+seqtab.nochim_rare_pre_wt.adonis <- adonis2(seqtab.nochim.wt_pre~ Sex, 
+                                         data = metadata[which(metadata$FMTdays == "FMT-10" & metadata$Genotype == "WT"),], 
+                                         permutations = 10000 )
+
+seqtab.nochim_rare_pre_wt.adonis
+
+#The high variability in whole community diversity may obscure associations 
+#envfit will look at fit for just PC1 and PC2
+
+set.seed(731)
+seqtab.nochim_rare_pre_wt.envfit <- envfit(seqtab.nochim.wt_pre.prcomp$x ~ Sex, data= metadata[which(metadata$FMTdays == "FMT-10" & metadata$Genotype == "WT"),], choices=c(1,2))
+
+seqtab.nochim_rare_pre_wt.envfit
+
+#Goodness of fit:
+#        r2 Pr(>r)  
+#Sex 0.6277  0.022
+
+
+```
+
+
 ### Post transplant diversity
 
 The next question, does FMT shift the microbiome in a sex specific manner. 
